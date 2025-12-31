@@ -32,26 +32,37 @@ export const all = (req: Request, res: Response, next: NextFunction): void => {
     try{
         console.log('POST /scan endpoint hit');
 
-        const {logs, window, startingIndex = 1000000} = req.body
-        console.log('Request body:', { logs, window, startingIndex });
+        const {logs, window, provider = 'google'} = req.body
+        console.log('Request body:', { logs, window, provider });
 
-        const logName = Array.isArray(logs) && logs.length > 0 ? logs[0] : 'us1/argon2025h2';
+        // Determine which CT log to use
+        let baseUrl: string;
+        let logName: string;
+
+        if (provider === 'cloudflare') {
+            baseUrl = 'https://ct.cloudflare.com/logs';
+            logName = Array.isArray(logs) && logs.length > 0 ? logs[0] : 'nimbus2025';
+        } else {
+            // Default to Google
+            baseUrl = 'https://ct.googleapis.com/logs';
+            logName = Array.isArray(logs) && logs.length > 0 ? logs[0] : 'us1/argon2025h2';
+        }
 
         // Fire off scan in background
-        console.log('Starting googleScan...');
-        googleScan(window, logName)
+        console.log(`Starting ${provider} scan with log: ${logName}...`);
+        scanCTLog(window, baseUrl, logName)
             .then(() => {
-                console.log('googleScan completed successfully');
+                console.log(`${provider} scan completed successfully`);
             })
-            .catch(error => {
+            .catch((error: unknown) => {
                 console.error('Background scan error:', error);
             });
 
         res.status(200).json({
             message: 'Scan started',
-            logs,
-            window,
-            startingIndex
+            provider,
+            logs: logName,
+            window
         })
     }catch(error){
         console.error(error)
@@ -147,7 +158,7 @@ const saveCertificate = (cert: CertificateData): void => {
 export const testGoogleScan = async (): Promise<void> => {
     console.log('testGoogleScan called directly');
     // Use us1/argon2025h2 - a current usable Google CT log
-    return googleScan('14months', 'us1/argon2025h2');
+    return scanCTLog('14months', 'https://ct.googleapis.com/logs', 'us1/argon2025h2');
 }
 
 export const parseTimeWindow = (window: string): number => {
@@ -168,11 +179,11 @@ export const parseTimeWindow = (window: string): number => {
     return now - milliseconds;
 }
 
-const googleScan = async ( window: string, logName: string = 'us1/argon2025h2'): Promise<void> => {
+const scanCTLog = async (window: string, baseUrl: string, logName: string): Promise<void> => {
     const batchSize = 1000;
 
     // Get current tree head
-    const sthUrl = `https://ct.googleapis.com/logs/${logName}/ct/v1/get-sth`;
+    const sthUrl = `${baseUrl}/${logName}/ct/v1/get-sth`;
     const sthResponse = await axios.get<SignedTreeHead>(sthUrl);
     const treeSize = sthResponse.data.tree_size;
 
@@ -186,7 +197,7 @@ const googleScan = async ( window: string, logName: string = 'us1/argon2025h2'):
     let currentIndex = treeSize - 1;
     const maxBatches = 1000; // Allow scanning far back if needed
 
-    console.log({googleScan: 'start'})
+    console.log({scanCTLog: 'start', baseUrl, logName})
 
     let totalAcUkFound = 0;
     let totalSaved = 0;
@@ -196,7 +207,7 @@ const googleScan = async ( window: string, logName: string = 'us1/argon2025h2'):
         const end = currentIndex;
         const start = Math.max(0, currentIndex - batchSize + 1);
 
-        const url = `https://ct.googleapis.com/logs/${logName}/ct/v1/get-entries?start=${start}&end=${end}`;
+        const url = `${baseUrl}/${logName}/ct/v1/get-entries?start=${start}&end=${end}`;
 
         console.log(`Fetching entries ${start} to ${end}...`);
 
