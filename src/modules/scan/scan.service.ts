@@ -24,49 +24,96 @@ interface CertificateData {
     cert_name: string;
     name_values: string;
     expiry_date: string;
-    valid_date: string;
+    not_before: string;
 }
 
-export const all = (req: Request, res: Response, next: NextFunction): void => {
+interface ProviderConfig {
+    google?: string[];
+    cloudflare?: string[];
+    digicert?: string[];
+}
 
+// Global domains filter - configurable per scan
+let currentDomains: string[] = ['.ac.uk'];
+
+export const all = (req: Request, res: Response, next: NextFunction): void => {
     try{
         console.log('POST /scan endpoint hit');
 
-        const {logs, window, provider = 'google'} = req.body
-        console.log('Request body:', { logs, window, provider });
+        // Defaults: scan all providers, 13 months, .ac.uk domains
+        const {
+            window = '13months',
+            domains = ['.ac.uk'],
+            providers = {
+                google: ['us1/argon2025h2'],
+                cloudflare: ['nimbus2025'],
+                digicert: ['yeti2025', 'nessie2025']
+            }
+        } = req.body as {
+            window?: string;
+            domains?: string[];
+            providers?: ProviderConfig;
+        };
 
-        // Determine which CT log to use
-        let baseUrl: string;
-        let logName: string;
+        console.log('Request body:', { window, domains, providers });
 
-        if (provider === 'cloudflare') {
-            baseUrl = 'https://ct.cloudflare.com/logs';
-            logName = Array.isArray(logs) && logs.length > 0 ? logs[0] : 'nimbus2025';
-        } else {
-            // Default to Google
-            baseUrl = 'https://ct.googleapis.com/logs';
-            logName = Array.isArray(logs) && logs.length > 0 ? logs[0] : 'us1/argon2025h2';
+        // Set global domains filter for this scan
+        currentDomains = domains;
+
+        const scanPromises: Promise<void>[] = [];
+
+        // Google scans
+        if (providers.google && providers.google.length > 0) {
+            for (const log of providers.google) {
+                console.log(`Starting Google scan with log: ${log}`);
+                scanPromises.push(
+                    scanCTLog(window, 'https://ct.googleapis.com/logs', log)
+                        .then(() => console.log(`Google ${log} scan completed`))
+                        .catch((error: unknown) => console.error(`Google ${log} error:`, error))
+                );
+            }
         }
 
-        // Fire off scan in background
-        console.log(`Starting ${provider} scan with log: ${logName}...`);
-        scanCTLog(window, baseUrl, logName)
-            .then(() => {
-                console.log(`${provider} scan completed successfully`);
-            })
-            .catch((error: unknown) => {
-                console.error('Background scan error:', error);
-            });
+        // Cloudflare scans
+        if (providers.cloudflare && providers.cloudflare.length > 0) {
+            for (const log of providers.cloudflare) {
+                console.log(`Starting Cloudflare scan with log: ${log}`);
+                scanPromises.push(
+                    scanCTLog(window, 'https://ct.cloudflare.com/logs', log)
+                        .then(() => console.log(`Cloudflare ${log} scan completed`))
+                        .catch((error: unknown) => console.error(`Cloudflare ${log} error:`, error))
+                );
+            }
+        }
+
+        // DigiCert scans
+        if (providers.digicert && providers.digicert.length > 0) {
+            for (const log of providers.digicert) {
+                console.log(`Starting DigiCert scan with log: ${log}`);
+                const baseUrl = `https://${log}.ct.digicert.com/log`;
+                scanPromises.push(
+                    scanCTLog(window, baseUrl, '')
+                        .then(() => console.log(`DigiCert ${log} scan completed`))
+                        .catch((error: unknown) => console.error(`DigiCert ${log} error:`, error))
+                );
+            }
+        }
+
+        // All scans running in parallel
+        Promise.all(scanPromises)
+            .then(() => console.log('All scans completed successfully'))
+            .catch((error: unknown) => console.error('Some scans failed:', error));
 
         res.status(200).json({
-            message: 'Scan started',
-            provider,
-            logs: logName,
-            window
+            message: 'Scans started',
+            window,
+            domains,
+            providers,
+            totalScans: scanPromises.length
         })
     }catch(error){
         console.error(error)
-        res.status(500).json({ error: 'Failed to start scan' })
+        res.status(500).json({ error: 'Failed to start scans' })
     }
 
 }
@@ -115,16 +162,20 @@ const parseCertificate = (leafInput: string, extraData: string): CertificateData
 
         if (domains.length === 0) return null;
 
-        // Filter for .ac.uk domains only
-        const hasAcUk = domains.some(domain => domain.endsWith('.ac.uk') || domain === 'ac.uk');
+        // Filter for configured domains
+        const hasMatchingDomain = domains.some(domain =>
+            currentDomains.some(targetDomain =>
+                domain.endsWith(targetDomain) || domain === targetDomain.replace('.', '')
+            )
+        );
 
         // DEBUG: Log first few domains to see what we're filtering
         if (Math.random() < 0.001) { // Log ~0.1% of certificates
             console.log('Sample certificate domains:', domains.slice(0, 3).join(', '));
-            console.log('Has .ac.uk:', hasAcUk);
+            console.log('Matches target domains:', hasMatchingDomain);
         }
 
-        if (!hasAcUk) return null;
+        if (!hasMatchingDomain) return null;
 
         const certName = domains[0] || 'unknown';
         const nameValues = domains.join(', ');
@@ -134,7 +185,7 @@ const parseCertificate = (leafInput: string, extraData: string): CertificateData
             cert_name: certName,
             name_values: nameValues,
             expiry_date: cert.validTo,
-            valid_date: cert.validFrom
+            not_before: cert.validFrom
         };
     } catch (error: unknown) {
         // Silently skip invalid certificates (common in CT logs with precerts and special entries)
@@ -148,11 +199,11 @@ const parseCertificate = (leafInput: string, extraData: string): CertificateData
 
 const saveCertificate = (cert: CertificateData): void => {
     const stmt = db.prepare(`
-        INSERT INTO certificates (cert_id, cert_name, name_values, expiry_date, valid_date)
+        INSERT INTO certificates (cert_id, cert_name, name_values, expiry_date, not_before)
         VALUES (?, ?, ?, ?, ?)
     `);
 
-    stmt.run(cert.cert_id, cert.cert_name, cert.name_values, cert.expiry_date, cert.valid_date);
+    stmt.run(cert.cert_id, cert.cert_name, cert.name_values, cert.expiry_date, cert.not_before);
 }
 
 export const testGoogleScan = async (): Promise<void> => {
@@ -182,8 +233,9 @@ export const parseTimeWindow = (window: string): number => {
 const scanCTLog = async (window: string, baseUrl: string, logName: string): Promise<void> => {
     const batchSize = 1000;
 
-    // Get current tree head
-    const sthUrl = `${baseUrl}/${logName}/ct/v1/get-sth`;
+    // Construct URLs properly (handle DigiCert's different URL structure)
+    const logPath = logName ? `/${logName}` : '';
+    const sthUrl = `${baseUrl}${logPath}/ct/v1/get-sth`;
     const sthResponse = await axios.get<SignedTreeHead>(sthUrl);
     const treeSize = sthResponse.data.tree_size;
 
@@ -207,7 +259,7 @@ const scanCTLog = async (window: string, baseUrl: string, logName: string): Prom
         const end = currentIndex;
         const start = Math.max(0, currentIndex - batchSize + 1);
 
-        const url = `${baseUrl}/${logName}/ct/v1/get-entries?start=${start}&end=${end}`;
+        const url = `${baseUrl}${logPath}/ct/v1/get-entries?start=${start}&end=${end}`;
 
         console.log(`Fetching entries ${start} to ${end}...`);
 
@@ -230,8 +282,8 @@ const scanCTLog = async (window: string, baseUrl: string, logName: string): Prom
                 if (cert) {
                     parsedCount++;
 
-                    // Check if certificate is newer than cutoff
-                    const certIssuedTime = new Date(cert.valid_date).getTime();
+                    // Check if certificate is newer than cutoff (using notBefore date)
+                    const certIssuedTime = new Date(cert.not_before).getTime();
                     if (certIssuedTime >= cutoffTime) {
                         certsNewerThanCutoff++;
                         try {
