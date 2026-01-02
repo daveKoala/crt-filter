@@ -19,7 +19,7 @@ export interface CertificateData {
   issuer: string;
   common_name: string;
   name_values: string;
-  expiry_date: string;
+  not_after: string;
   not_before: string;
 }
 

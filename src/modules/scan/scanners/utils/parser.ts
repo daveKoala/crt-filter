@@ -31,13 +31,16 @@ export const parseCertificate = (
 
     const cert_id = createHash("sha256").update(cert.raw).digest("hex");
 
+    const notBefore = new Date(cert.validFrom).toISOString();
+    const notAfter = new Date(cert.validTo).toISOString();
+
     const response = {
       cert_id: cert_id,
       issuer: formatIssuer(cert.issuer),
       common_name: getCommonName(cert),
       name_values: getNameValues(cert).join(","),
-      not_before: cert.validFrom,
-      expiry_date: cert.validTo,
+      not_before: notBefore,
+      not_after: notAfter,
     };
 
     return response;
