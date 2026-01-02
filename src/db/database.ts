@@ -11,9 +11,10 @@ const createTableSQL = `
   CREATE TABLE certificates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cert_id TEXT NOT NULL,
-    cert_name TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    common_name TEXT NOT NULL,
     name_values TEXT,
-    expiry_date TEXT,
+    not_after TEXT,
     not_before TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )

@@ -64,19 +64,35 @@ export abstract class BaseScanner {
   }
 
   /**
+   * Check if certificate matches any of the configured domain filters
+   */
+  protected matchesDomainFilter(cert: CertificateData): boolean {
+    if (this.config.domains.length === 0) {
+      return true; // No filter = match everything
+    }
+
+    const nameValues = cert.name_values.split(',');
+
+    return nameValues.some(domain =>
+      this.config.domains.some(filter => domain.includes(filter))
+    );
+  }
+
+  /**
    * Save certificate to database
    */
   protected saveCertificate(cert: CertificateData): void {
     const stmt = this.db.prepare(`
-      INSERT INTO certificates (cert_id, cert_name, name_values, expiry_date, not_before)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO certificates (cert_id, issuer, common_name, name_values, not_after, not_before)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
       cert.cert_id,
-      cert.cert_name,
+      cert.issuer,
+      cert.common_name,
       cert.name_values,
-      cert.expiry_date,
+      cert.not_after,
       cert.not_before
     );
   }
@@ -149,6 +165,11 @@ export abstract class BaseScanner {
           for (const entry of entries) {
             const cert = await this.parseCertificate(entry.leaf_input, entry.extra_data);
             if (cert) {
+              // Apply domain filter
+              if (!this.matchesDomainFilter(cert)) {
+                continue;
+              }
+
               parsedCount++;
 
               const certIssuedTime = new Date(cert.not_before).getTime();

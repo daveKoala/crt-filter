@@ -23,7 +23,7 @@ describe("parseCertificate", () => {
             "common_name",
             "name_values",
             "not_before",
-            "expiry_date"
+            "not_after"
           );
 
           // Validate cert_id format (SHA256 = 64 hex chars)
