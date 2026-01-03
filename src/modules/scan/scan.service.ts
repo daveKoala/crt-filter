@@ -9,7 +9,7 @@ export const all = (req: Request, res: Response, next: NextFunction): void => {
 
     // Defaults: scan all providers, 13 months, .ac.uk domains
     const {
-      window = "24months",
+      window = "12months",
       domains = [".ac.uk"],
       providers = {
         google: ["us1/argon2025h2", "us2/argon2025h2"],

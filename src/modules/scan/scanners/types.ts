@@ -14,6 +14,8 @@ export interface SignedTreeHead {
   tree_head_signature: string;
 }
 
+export type CTEntryType = "x509" | "precert" | "unknown";
+
 export interface CertificateData {
   cert_id: string;
   issuer: string;
@@ -21,6 +23,8 @@ export interface CertificateData {
   name_values: string;
   not_after: string;
   not_before: string;
+  entry_timestamp?: number;
+  entry_type?: CTEntryType;
 }
 
 export interface ProviderConfig {

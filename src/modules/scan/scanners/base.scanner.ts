@@ -1,6 +1,9 @@
 import type { Database } from 'better-sqlite3';
+import fs from 'fs';
 import type { CertificateData, CTLogResponse, SignedTreeHead } from './types';
+import type { LeafInputInfo } from './utils/parser';
 import axios from 'axios';
+import { parseLeafInput } from './utils/parser';
 
 export interface ScannerConfig {
   window: string;
@@ -13,10 +16,12 @@ export abstract class BaseScanner {
   protected config: ScannerConfig;
   protected batchSize = 1000;
   protected maxBatches = 1000;
+  private jsonlPath: string | null;
 
   constructor(db: Database, config: ScannerConfig) {
     this.db = db;
     this.config = config;
+    this.jsonlPath = process.env.CERT_JSONL_PATH?.trim() || null;
   }
 
   /**
@@ -71,11 +76,27 @@ export abstract class BaseScanner {
       return true; // No filter = match everything
     }
 
-    const nameValues = cert.name_values.split(',');
+    const nameValues = cert.name_values
+      .split(',')
+      .map(value => this.normalizeDomainValue(value))
+      .filter(Boolean);
 
     return nameValues.some(domain =>
-      this.config.domains.some(filter => domain.includes(filter))
+      this.config.domains.some(filter => {
+        const normalizedFilter = this.normalizeDomainValue(filter);
+        if (!normalizedFilter) {
+          return false;
+        }
+        const suffix = normalizedFilter.startsWith('.')
+          ? normalizedFilter
+          : `.${normalizedFilter}`;
+        return domain.endsWith(suffix);
+      })
     );
+  }
+
+  private normalizeDomainValue(value: string): string {
+    return value.trim().toLowerCase().replace(/\.+$/, '');
   }
 
   /**
@@ -83,8 +104,17 @@ export abstract class BaseScanner {
    */
   protected saveCertificate(cert: CertificateData): void {
     const stmt = this.db.prepare(`
-      INSERT INTO certificates (cert_id, issuer, common_name, name_values, not_after, not_before)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO certificates (
+        cert_id,
+        issuer,
+        common_name,
+        name_values,
+        not_after,
+        not_before,
+        entry_timestamp,
+        entry_type
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -93,8 +123,23 @@ export abstract class BaseScanner {
       cert.common_name,
       cert.name_values,
       cert.not_after,
-      cert.not_before
+      cert.not_before,
+      cert.entry_timestamp ?? null,
+      cert.entry_type ?? null
     );
+
+    if (this.jsonlPath) {
+      try {
+        const record = {
+          ...cert,
+          provider: this.getProviderName(),
+          log_name: this.config.logName,
+        };
+        fs.appendFileSync(this.jsonlPath, `${JSON.stringify(record)}\n`, 'utf8');
+      } catch (error) {
+        console.error('Error writing JSONL:', error);
+      }
+    }
   }
 
   /**
@@ -161,9 +206,25 @@ export abstract class BaseScanner {
           let parsedCount = 0;
           let certsNewerThanCutoff = 0;
           let parseErrors = 0;
+          let oldestEntryTimestamp: number | null = null;
 
           for (const entry of entries) {
-            const cert = await this.parseCertificate(entry.leaf_input, entry.extra_data);
+            const leafInfo = parseLeafInput(entry.leaf_input);
+            const entryTimestamp =
+              typeof leafInfo.entry_timestamp === 'number'
+                ? leafInfo.entry_timestamp
+                : null;
+            if (entryTimestamp !== null) {
+              if (oldestEntryTimestamp === null || entryTimestamp < oldestEntryTimestamp) {
+                oldestEntryTimestamp = entryTimestamp;
+              }
+            }
+
+            const cert = await this.parseCertificate(
+              entry.leaf_input,
+              entry.extra_data,
+              leafInfo
+            );
             if (cert) {
               // Apply domain filter
               if (!this.matchesDomainFilter(cert)) {
@@ -172,7 +233,8 @@ export abstract class BaseScanner {
 
               parsedCount++;
 
-              const certIssuedTime = new Date(cert.not_before).getTime();
+              const certIssuedTime =
+                cert.entry_timestamp ?? new Date(cert.not_before).getTime();
               if (certIssuedTime >= cutoffTime) {
                 certsNewerThanCutoff++;
                 try {
@@ -197,8 +259,8 @@ export abstract class BaseScanner {
             `saved ${savedCount} certificates`
           );
 
-          // Stop if this batch had no certificates within the time window
-          if (parsedCount > 0 && certsNewerThanCutoff === 0) {
+          // Stop once the batch crosses the cutoff timestamp
+          if (oldestEntryTimestamp !== null && oldestEntryTimestamp < cutoffTime) {
             console.log('Reached cutoff date - stopping');
             break;
           }
@@ -239,6 +301,7 @@ export abstract class BaseScanner {
    */
   protected abstract parseCertificate(
     leafInput: string,
-    extraData: string
+    extraData: string,
+    leafInfo?: LeafInputInfo
   ): Promise<CertificateData | null> | CertificateData | null;
 }

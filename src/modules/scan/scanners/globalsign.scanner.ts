@@ -4,17 +4,17 @@ import type { LeafInputInfo } from './utils/parser';
 import { parseCertificate } from './utils/parser';
 import type { CertificateData } from './types';
 
-export class CloudflareScanner extends BaseScanner {
+export class GlobalSignScanner extends BaseScanner {
   constructor(db: Database, config: ScannerConfig) {
     super(db, config);
   }
 
   protected getBaseUrl(): string {
-    return 'https://ct.cloudflare.com/logs';
+    return 'https://ct.googleapis.com/logs/eu1';
   }
 
   protected getProviderName(): string {
-    return 'Cloudflare';
+    return 'GlobalSign';
   }
 
   protected parseCertificate(

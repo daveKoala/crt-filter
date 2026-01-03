@@ -13,11 +13,11 @@ describe("parseCertificate", () => {
   describe("Integration: Parsing Base64 encoded blobs", () => {
     it("should parse CT log entries and return valid certificate data", () => {
       getEntries.entries.forEach((entry) => {
-        const parsed = parseCertificate(entry.leaf_input, entry.extra_data, []);
+        const parsed = parseCertificate(entry.leaf_input, entry.extra_data);
 
         if (parsed !== null) {
           // Validate required fields exist
-          expect(parsed).to.have.all.keys(
+          expect(parsed).to.include.keys(
             "cert_id",
             "issuer",
             "common_name",

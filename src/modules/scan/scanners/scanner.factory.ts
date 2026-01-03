@@ -3,8 +3,11 @@ import { BaseScanner, ScannerConfig } from './base.scanner';
 import { GoogleScanner } from './google.scanner';
 import { CloudflareScanner } from './cloudflare.scanner';
 import { DigiCertScanner } from './digicert.scanner';
+import { LetsEncryptScanner } from './letsencrypt.scanner';
+import { SectigoScanner } from './sectigo.scanner';
+import { GlobalSignScanner } from './globalsign.scanner';
 
-export type ScannerProvider = 'google' | 'cloudflare' | 'digicert';
+export type ScannerProvider = 'google' | 'cloudflare' | 'digicert' | 'letsencrypt' | 'sectigo' | 'globalsign';
 
 export class ScannerFactory {
   /**
@@ -22,6 +25,12 @@ export class ScannerFactory {
         return new CloudflareScanner(db, config);
       case 'digicert':
         return new DigiCertScanner(db, config);
+      case 'letsencrypt':
+        return new LetsEncryptScanner(db, config);
+      case 'sectigo':
+        return new SectigoScanner(db, config);
+      case 'globalsign':
+        return new GlobalSignScanner(db, config);
       default:
         throw new Error(`Unknown scanner provider: ${provider}`);
     }
@@ -38,6 +47,9 @@ export class ScannerFactory {
       google?: string[];
       cloudflare?: string[];
       digicert?: string[];
+      letsencrypt?: string[];
+      sectigo?: string[];
+      globalsign?: string[];
     }
   ): BaseScanner[] {
     const scanners: BaseScanner[] = [];
@@ -73,6 +85,45 @@ export class ScannerFactory {
       for (const logName of providers.digicert) {
         scanners.push(
           ScannerFactory.createScanner('digicert', db, {
+            window,
+            domains,
+            logName,
+          })
+        );
+      }
+    }
+
+    // Create Let's Encrypt scanners
+    if (providers.letsencrypt && providers.letsencrypt.length > 0) {
+      for (const logName of providers.letsencrypt) {
+        scanners.push(
+          ScannerFactory.createScanner('letsencrypt', db, {
+            window,
+            domains,
+            logName,
+          })
+        );
+      }
+    }
+
+    // Create Sectigo scanners
+    if (providers.sectigo && providers.sectigo.length > 0) {
+      for (const logName of providers.sectigo) {
+        scanners.push(
+          ScannerFactory.createScanner('sectigo', db, {
+            window,
+            domains,
+            logName,
+          })
+        );
+      }
+    }
+
+    // Create GlobalSign scanners
+    if (providers.globalsign && providers.globalsign.length > 0) {
+      for (const logName of providers.globalsign) {
+        scanners.push(
+          ScannerFactory.createScanner('globalsign', db, {
             window,
             domains,
             logName,
