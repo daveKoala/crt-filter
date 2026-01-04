@@ -4,24 +4,31 @@ import type { CertificateData, CTLogResponse, SignedTreeHead } from './types';
 import type { LeafInputInfo } from './utils/parser';
 import axios from 'axios';
 import { parseLeafInput } from './utils/parser';
+import { matchesDomainFilter } from './utils/domain-matcher';
+import { StoppingStrategy, ConsecutiveOldBatchesStrategy } from './strategies';
 
 export interface ScannerConfig {
   window: string;
   domains: string[];
   logName: string;
+  stoppingStrategy?: StoppingStrategy;
 }
 
 export abstract class BaseScanner {
   protected db: Database;
   protected config: ScannerConfig;
   protected batchSize = 1000;
-  protected maxBatches = 1000;
+  protected maxBatches = 50000; // Increased from 1000 to allow scanning up to 50 million entries
+  protected stoppingStrategy: StoppingStrategy;
   private jsonlPath: string | null;
 
   constructor(db: Database, config: ScannerConfig) {
     this.db = db;
     this.config = config;
     this.jsonlPath = process.env.CERT_JSONL_PATH?.trim() || null;
+
+    // Use provided strategy or default to ConsecutiveOldBatchesStrategy
+    this.stoppingStrategy = config.stoppingStrategy || new ConsecutiveOldBatchesStrategy(5, 90);
   }
 
   /**
@@ -72,31 +79,7 @@ export abstract class BaseScanner {
    * Check if certificate matches any of the configured domain filters
    */
   protected matchesDomainFilter(cert: CertificateData): boolean {
-    if (this.config.domains.length === 0) {
-      return true; // No filter = match everything
-    }
-
-    const nameValues = cert.name_values
-      .split(',')
-      .map(value => this.normalizeDomainValue(value))
-      .filter(Boolean);
-
-    return nameValues.some(domain =>
-      this.config.domains.some(filter => {
-        const normalizedFilter = this.normalizeDomainValue(filter);
-        if (!normalizedFilter) {
-          return false;
-        }
-        const suffix = normalizedFilter.startsWith('.')
-          ? normalizedFilter
-          : `.${normalizedFilter}`;
-        return domain.endsWith(suffix);
-      })
-    );
-  }
-
-  private normalizeDomainValue(value: string): string {
-    return value.trim().toLowerCase().replace(/\.+$/, '');
+    return matchesDomainFilter(cert, this.config.domains);
   }
 
   /**
@@ -176,6 +159,10 @@ export abstract class BaseScanner {
     console.log(`Starting ${providerName} scan with log: ${logName}`);
 
     try {
+      // Reset stopping strategy for each scan
+      this.stoppingStrategy.reset();
+      console.log(`Using stopping strategy: ${this.stoppingStrategy.getDescription()}`);
+
       const treeSize = await this.getTreeSize();
       console.log(`Tree size: ${treeSize}, scanning backwards from latest entries`);
 
@@ -205,6 +192,7 @@ export abstract class BaseScanner {
           let savedCount = 0;
           let parsedCount = 0;
           let certsNewerThanCutoff = 0;
+          let certsOlderThanCutoff = 0;
           let parseErrors = 0;
           let oldestEntryTimestamp: number | null = null;
 
@@ -243,6 +231,8 @@ export abstract class BaseScanner {
                 } catch (err) {
                   console.error('Error saving certificate:', err);
                 }
+              } else {
+                certsOlderThanCutoff++;
               }
             } else {
               parseErrors++;
@@ -256,12 +246,26 @@ export abstract class BaseScanner {
           console.log(
             `Processed ${entries.length} entries, ${parseErrors} parse errors, ` +
             `found ${parsedCount} matching certs, ${certsNewerThanCutoff} within time window, ` +
-            `saved ${savedCount} certificates`
+            `${certsOlderThanCutoff} older than cutoff, saved ${savedCount} certificates`
           );
 
-          // Stop once the batch crosses the cutoff timestamp
-          if (oldestEntryTimestamp !== null && oldestEntryTimestamp < cutoffTime) {
-            console.log('Reached cutoff date - stopping');
+          // Use stopping strategy to determine if we should stop
+          const totalCertsChecked = certsNewerThanCutoff + certsOlderThanCutoff;
+          const decision = this.stoppingStrategy.shouldStop({
+            batchNumber: batch,
+            totalEntries: entries.length,
+            certsNewerThanCutoff,
+            certsOlderThanCutoff,
+            totalCertsChecked,
+            cutoffTime,
+            oldestEntryTimestamp,
+          });
+
+          if (decision.shouldStop) {
+            console.log(`Stopping: ${decision.reason}`);
+            if (decision.metadata) {
+              console.log('Stop metadata:', decision.metadata);
+            }
             break;
           }
 

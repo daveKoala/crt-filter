@@ -10,7 +10,15 @@ export class LetsEncryptScanner extends BaseScanner {
   }
 
   protected getBaseUrl(): string {
-    return 'https://oak.ct.letsencrypt.org';
+    // Let's Encrypt uses log name in the URL path
+    return `https://oak.ct.letsencrypt.org/${this.config.logName}`;
+  }
+
+  /**
+   * Let's Encrypt includes log name in base URL, so no additional path needed
+   */
+  protected getLogPath(): string {
+    return '';
   }
 
   protected getProviderName(): string {

@@ -5,9 +5,8 @@ import { CloudflareScanner } from './cloudflare.scanner';
 import { DigiCertScanner } from './digicert.scanner';
 import { LetsEncryptScanner } from './letsencrypt.scanner';
 import { SectigoScanner } from './sectigo.scanner';
-import { GlobalSignScanner } from './globalsign.scanner';
 
-export type ScannerProvider = 'google' | 'cloudflare' | 'digicert' | 'letsencrypt' | 'sectigo' | 'globalsign';
+export type ScannerProvider = 'google' | 'cloudflare' | 'digicert' | 'letsencrypt' | 'sectigo';
 
 export class ScannerFactory {
   /**
@@ -29,8 +28,6 @@ export class ScannerFactory {
         return new LetsEncryptScanner(db, config);
       case 'sectigo':
         return new SectigoScanner(db, config);
-      case 'globalsign':
-        return new GlobalSignScanner(db, config);
       default:
         throw new Error(`Unknown scanner provider: ${provider}`);
     }
@@ -49,7 +46,6 @@ export class ScannerFactory {
       digicert?: string[];
       letsencrypt?: string[];
       sectigo?: string[];
-      globalsign?: string[];
     }
   ): BaseScanner[] {
     const scanners: BaseScanner[] = [];
@@ -111,19 +107,6 @@ export class ScannerFactory {
       for (const logName of providers.sectigo) {
         scanners.push(
           ScannerFactory.createScanner('sectigo', db, {
-            window,
-            domains,
-            logName,
-          })
-        );
-      }
-    }
-
-    // Create GlobalSign scanners
-    if (providers.globalsign && providers.globalsign.length > 0) {
-      for (const logName of providers.globalsign) {
-        scanners.push(
-          ScannerFactory.createScanner('globalsign', db, {
             window,
             domains,
             logName,

@@ -31,4 +31,6 @@ export interface ProviderConfig {
   google?: string[];
   cloudflare?: string[];
   digicert?: string[];
+  letsencrypt?: string[];
+  sectigo?: string[];
 }

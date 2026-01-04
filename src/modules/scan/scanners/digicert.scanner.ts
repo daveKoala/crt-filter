@@ -10,8 +10,8 @@ export class DigiCertScanner extends BaseScanner {
   }
 
   protected getBaseUrl(): string {
-    // DigiCert uses a different URL structure where the log name is in the subdomain
-    return `https://${this.config.logName}.ct.digicert.com/log`;
+    // DigiCert Wyvern series uses URL structure: https://wyvern.ct.digicert.com/{logName}/
+    return `https://wyvern.ct.digicert.com/${this.config.logName}`;
   }
 
   protected getProviderName(): string {
@@ -19,7 +19,7 @@ export class DigiCertScanner extends BaseScanner {
   }
 
   /**
-   * DigiCert doesn't use additional log path since it's in the base URL
+   * DigiCert includes log name in base URL, so no additional path needed
    */
   protected getLogPath(): string {
     return '';

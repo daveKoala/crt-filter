@@ -10,11 +10,19 @@ export class SectigoScanner extends BaseScanner {
   }
 
   protected getBaseUrl(): string {
-    return 'https://ct.sectigo.com';
+    // Sectigo Elephant series uses URL structure: https://{logName}.ct.sectigo.com
+    return `https://${this.config.logName}.ct.sectigo.com`;
   }
 
   protected getProviderName(): string {
     return 'Sectigo';
+  }
+
+  /**
+   * Sectigo includes log name in base URL, so no additional path needed
+   */
+  protected getLogPath(): string {
+    return '';
   }
 
   protected parseCertificate(
