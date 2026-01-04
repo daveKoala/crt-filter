@@ -2,43 +2,19 @@ import type { Request, Response, NextFunction } from "express";
 import db from "../../db/database";
 import { ScannerFactory } from "./scanners";
 import type { ProviderConfig } from "./scanners/types";
+import { DEFAULT_PROVIDER_CONFIG } from "./ct-logs.config";
 
 export const all = (req: Request, res: Response, next: NextFunction): void => {
   try {
     console.log("POST /scan endpoint hit");
 
     // Defaults: scan all providers, 12 months, .ac.uk domains
-    // Updated with 2025 active CT logs
+    // Provider configuration is centralized in ct-logs.config.ts
+    // See CT_LOG_SELECTION.md for detailed analysis
     const {
       window = "12months",
       domains = [".ac.uk"],
-      providers = {
-        google: [
-          "us1/argon2025h2", // Current, expires Jan 2026
-          "eu1/xenon2025h2", // Current, expires Jan 2026
-          "us1/argon2027h1", // Future-ready
-          "eu1/xenon2027h1", // Future-ready
-        ],
-        cloudflare: [
-          "nimbus2025", // Current
-          "nimbus2026", // Future-ready
-          "nimbus2027", // Future-ready
-        ],
-        digicert: [
-          "2025h2", // Wyvern series
-          "2026h1",
-          "2026h2",
-        ],
-        letsencrypt: [
-          "2025h2", // Oak series (current generation)
-          "2026h1",
-          "2026h2",
-        ],
-        sectigo: [
-          "elephant2025h2", // Elephant series (current generation)
-          "elephant2026h1",
-        ],
-      },
+      providers = DEFAULT_PROVIDER_CONFIG,
     } = req.body as {
       window?: string;
       domains?: string[];
@@ -104,13 +80,8 @@ export const testEndpoints = async (
 ): Promise<void> => {
   const axios = (await import("axios")).default;
 
-  const defaultProviders = {
-    google: ["us1/argon2025h2", "eu1/xenon2025h2"],
-    cloudflare: ["nimbus2025"],
-    digicert: ["2025h2"],
-    letsencrypt: ["2025h2"],
-    sectigo: ["elephant2025h2"],
-  };
+  // Use centralized configuration
+  const defaultProviders = DEFAULT_PROVIDER_CONFIG;
 
   const results: Record<
     string,
@@ -132,7 +103,7 @@ export const testEndpoints = async (
   };
 
   // Test Google logs
-  for (const logName of defaultProviders.google) {
+  for (const logName of defaultProviders.google ?? []) {
     const baseUrl = `https://ct.googleapis.com/logs/${logName}`;
     const getSthUrl = `${baseUrl}/ct/v1/get-sth`;
     const getEntriesUrl = `${baseUrl}/ct/v1/get-entries?start=0&end=0`;
@@ -162,7 +133,7 @@ export const testEndpoints = async (
   }
 
   // Test Cloudflare logs
-  for (const logName of defaultProviders.cloudflare) {
+  for (const logName of defaultProviders.cloudflare ?? []) {
     const baseUrl = `https://ct.cloudflare.com/logs/${logName}`;
     const getSthUrl = `${baseUrl}/ct/v1/get-sth`;
     const getEntriesUrl = `${baseUrl}/ct/v1/get-entries?start=0&end=0`;
@@ -192,8 +163,17 @@ export const testEndpoints = async (
   }
 
   // Test DigiCert logs
-  for (const logName of defaultProviders.digicert) {
-    const baseUrl = `https://wyvern.ct.digicert.com/${logName}`;
+  for (const logName of defaultProviders.digicert ?? []) {
+    // DigiCert has two series with different URL structures
+    let baseUrl: string;
+    if (logName.startsWith('yeti')) {
+      // Yeti series: https://yeti2025.ct.digicert.com/log
+      baseUrl = `https://${logName}.ct.digicert.com/log`;
+    } else {
+      // Wyvern series: https://wyvern.ct.digicert.com/2025h2
+      baseUrl = `https://wyvern.ct.digicert.com/${logName}`;
+    }
+
     const getSthUrl = `${baseUrl}/ct/v1/get-sth`;
     const getEntriesUrl = `${baseUrl}/ct/v1/get-entries?start=0&end=0`;
 
@@ -222,7 +202,7 @@ export const testEndpoints = async (
   }
 
   // Test Let's Encrypt logs
-  for (const logName of defaultProviders.letsencrypt) {
+  for (const logName of defaultProviders.letsencrypt ?? []) {
     const baseUrl = `https://oak.ct.letsencrypt.org/${logName}`;
     const getSthUrl = `${baseUrl}/ct/v1/get-sth`;
     const getEntriesUrl = `${baseUrl}/ct/v1/get-entries?start=0&end=0`;
@@ -252,7 +232,7 @@ export const testEndpoints = async (
   }
 
   // Test Sectigo logs
-  for (const logName of defaultProviders.sectigo) {
+  for (const logName of defaultProviders.sectigo ?? []) {
     const baseUrl = `https://${logName}.ct.sectigo.com`;
     const getSthUrl = `${baseUrl}/ct/v1/get-sth`;
     const getEntriesUrl = `${baseUrl}/ct/v1/get-entries?start=0&end=0`;
